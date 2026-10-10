@@ -69,7 +69,7 @@ Bulk cancellation is best-effort: when a database operation times out or connect
 - Network access for Gradle dependencies and the initial container image and vulnerability database downloads.
 - Ports `3306` (MariaDB), `8080` (API), `9090` (Prometheus), and `3000` (Grafana) available for the corresponding local services.
 
-MariaDB does not need to be installed on the host when using the Docker-backed local setup. See [usage-document.md](usage-document.md) for using a separately installed local database.
+MariaDB does not need to be installed on the host when using the Docker-backed local setup. See [usage-document.md](doc/usage-document.md) for using a separately installed local database.
 
 ## Quick start
 
@@ -99,7 +99,7 @@ Interactive API documentation:
 - Swagger UI: <http://localhost:8080/swagger-ui.html>
 - OpenAPI JSON: <http://localhost:8080/v3/api-docs>
 
-For manual MariaDB setup, Compose operation, examples, and troubleshooting, see [usage-document.md](usage-document.md).
+For manual MariaDB setup, Compose operation, examples, and troubleshooting, see [usage-document.md](doc/usage-document.md).
 
 ## API
 
@@ -155,7 +155,7 @@ Bulk request:
 
 Privilege values are restricted to `SELECT`, `INSERT`, `UPDATE`, `DELETE`, `CREATE`, `DROP`, `ALTER`, `INDEX`, and `REFERENCES`. Database and table identifiers must be valid and refer to an existing table. The default maximum bulk size is 100 operations. Bulk `200 OK` does not imply every item succeeded; inspect every item's `status`.
 
-Typical errors include `400 Bad Request` for invalid input and `502 Bad Gateway` if MariaDB rejects a single grant/revoke request. Bulk errors are returned item-by-item. Full request/response examples are in the [usage guide](usage-document.md#api-reference-and-examples).
+Typical errors include `400 Bad Request` for invalid input and `502 Bad Gateway` if MariaDB rejects a single grant/revoke request. Bulk errors are returned item-by-item. Full request/response examples are in the [usage guide](doc/usage-document.md#api-reference-and-examples).
 
 ## Tests and full pipeline
 
@@ -226,7 +226,7 @@ Configuration is supplied through environment variables or Spring properties. Im
 | `BULK_MAX_ITEMS` | Maximum operations in one batch | `100` |
 | `BULK_TIMEOUT` | Bulk request deadline | `10s` |
 
-Some compose-only credentials (MariaDB root and Grafana administrator) are required by `compose.yaml` and supplied by the full pipeline for its disposable environment. Use a secret manager or protected deployment configuration for real deployments; never commit credentials. Review [documentation.md](documentation.md) for architecture, concurrency, security, capacity, availability, and disaster-recovery details.
+Some compose-only credentials (MariaDB root and Grafana administrator) are required by `compose.yaml` and supplied by the full pipeline for its disposable environment. Use a secret manager or protected deployment configuration for real deployments; never commit credentials. Review [documentation.md](doc/documentation.md) for architecture, concurrency, security, capacity, availability, and disaster-recovery details.
 
 ## Project layout
 
@@ -249,6 +249,6 @@ Some compose-only credentials (MariaDB root and Grafana administrator) are requi
 
 ## Documentation
 
-- [Usage guide](usage-document.md) — setup, API request/response examples, Swagger, tests, full pipeline, and local database options.
-- [Architecture and NFR document](documentation.md) — high/low-level design, concurrency, scaling, HA, and disaster recovery.
+- [Usage guide](doc/usage-document.md) — setup, API request/response examples, Swagger, tests, full pipeline, and local database options.
+- [Architecture and NFR document](doc/documentation.md) — high/low-level design, concurrency, scaling, HA, and disaster recovery.
 - [Original requirements](doc/requirement.txt) — source project brief.

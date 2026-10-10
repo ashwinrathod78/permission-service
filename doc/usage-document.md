@@ -1,8 +1,8 @@
 # Permission service usage guide
 
-The repository root is the single Gradle project root. Run Gradle commands from this directory using `.\gradlew.bat` on Windows or `./gradlew` on Linux/macOS.
+The repository root is the single Gradle project root. Run Gradle commands from this directory using `.\gradlew.bat` on Windows or `../gradlew` on Linux/macOS.
 
-When launched with no explicitly selected Spring profile, the application uses the `local` profile and Spring Boot Docker Compose support starts `compose.dev.yaml` automatically. This provides a local MariaDB for IntelliJ's Run action as well as for Gradle `bootRun`. The local Compose database connects as MariaDB root because its migrations create databases and accounts. The local-only credentials and data volume are strictly for development and must not be used in production.
+When launched with no explicitly selected Spring profile, the application uses the `local` profile and Spring Boot Docker Compose support starts `../compose.dev.yaml` automatically. This provides a local MariaDB for IntelliJ's Run action as well as for Gradle `bootRun`. The local Compose database connects as MariaDB root because its migrations create databases and accounts. The local-only credentials and data volume are strictly for development and must not be used in production.
 
 ## Prerequisites
 
