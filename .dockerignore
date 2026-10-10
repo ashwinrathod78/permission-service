@@ -1,0 +1,9 @@
+.gradle
+build/*
+!build/libs/
+build/libs/*
+!build/libs/*.jar
+.git
+.idea
+doc
+**/.DS_Store

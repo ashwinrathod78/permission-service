@@ -1,0 +1,11 @@
+groups:
+  - name: permission-service
+    rules:
+      - alert: PermissionServiceUnavailable
+        expr: up{job="permission-service"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Permission service metrics endpoint is unavailable
+          description: Prometheus has failed to scrape the service for two minutes; check readiness, network and database health.

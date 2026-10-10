@@ -1,0 +1,238 @@
+==============================================================================
+PROJECT REQUIREMENT: MARIADB PERMISSION-MANAGEMENT SERVICE
+==============================================================================
+
+OVERVIEW
+--------
+A small permission-management service for MariaDB. The functionality is
+intentionally simple, because this is not a test of whether you can write CRUD.
+The goal is to show how a piece of software is taken through its whole life:
+built, tested, packaged, scanned, deployed and then operated by people who did
+not write it.
+
+Sections 1 to 3 are build work. Section 4 is a design discussion, not build
+work (document it, for example in docs/NFR.md).
+
+
+==============================================================================
+1. THE SERVICE
+==============================================================================
+
+A Spring Boot REST service that issues real SQL against MariaDB over JDBC.
+
+1.1 Endpoints
+-------------
+- POST /permissions/grant
+    Payload: { username, database, table, permissions[] }
+    Runs a GRANT statement.
+
+- POST /permissions/revoke
+    Same payload as grant.
+    Runs a REVOKE statement.
+
+- GET /permissions/{username}
+    Reads privileges back from information_schema.table_privileges.
+
+- POST /permissions/bulk
+    A batch of grant and revoke operations, applied concurrently.
+
+- GET /health
+- GET /ready
+    Readiness must reflect whether the database is actually reachable.
+
+1.2 SQL safety
+--------------
+- Identifiers in GRANT and REVOKE cannot be bound as parameters. The
+  implementation must show how this is handled safely (for example strict
+  allow-list validation and proper identifier quoting).
+
+1.3 Configuration and logging
+-----------------------------
+- Credentials are externalised (no secrets in code or image).
+- The connection pool is bounded.
+- Logs are structured and carry a correlation ID, so a request can be traced
+  to the SQL it produced.
+
+1.4 Concurrency (part of the exercise)
+--------------------------------------
+- The bulk endpoint applies its operations in parallel on a bounded executor
+  that is sized deliberately.
+- The relationship between the executor pool and the JDBC pool must be one
+  that can be explained.
+- Two operations touching the same principal must not race. A serialisation
+  decision must be made and justified.
+- Partial failure: return a result per item, not all-or-nothing.
+- Work has a timeout and a way to cancel it.
+- Shutdown drains what is in flight.
+- Write a test that runs the bulk endpoint under real parallelism and asserts
+  the END STATE. It must not be a test that passes only because the machine
+  happened to be fast.
+
+
+==============================================================================
+2. THE BUILD PIPELINE
+==============================================================================
+
+One command must take a clean checkout through to a running, scanned stack:
+
+    compile -> unit tests -> integration tests -> Docker image -> CVE scan
+    -> stack up -> smoke test
+
+- Every stage is bound into the Maven lifecycle.
+- Nothing may depend on someone following a README.
+
+2.1 Tests
+---------
+- Unit tests run on Surefire.
+- Integration tests run on Failsafe against a REAL MariaDB through
+  Testcontainers, so the build exercises the SQL rather than a mock.
+- Include at least one test case that tries to abuse the API (for example
+  SQL injection through identifiers).
+- A failing test stops the pipeline.
+
+2.2 Docker
+----------
+- Write your own Dockerfile. No buildpacks, no Jib.
+- Multi-stage build.
+- Runs as a non-root user.
+- Base image pinned by digest.
+- JRE rather than JDK in the final image.
+- Built by the Maven build, with the image tag taken from the project version.
+- Be ready to discuss layer ordering and the final image size.
+
+2.3 CVE scanning (as a gate)
+----------------------------
+- Scan the image that was just built.
+- Fail the build above a severity threshold you choose.
+- Trivy and Grype are the obvious free options, wired in through
+  exec-maven-plugin or a plugin such as tech.orla:trivy-maven-plugin. Any
+  scanner is acceptable.
+- Demonstrate the scan failing on purpose.
+- Document every finding that is suppressed and why.
+
+2.4 Schema and seed
+-------------------
+- Flyway or Liquibase migrations that create the test users, databases and
+  tables.
+
+2.5 Bring-up and proof
+----------------------
+The same command must:
+- start the service, MariaDB, Prometheus and Grafana (Grafana dashboards
+  provisioned as code),
+- run a smoke test against the live container,
+- and tear everything down again.
+
+
+==============================================================================
+3. OBSERVABILITY
+==============================================================================
+
+Prometheus metrics are exposed by the service, and two Grafana dashboards are
+provisioned with the stack.
+
+3.1 Dashboard 1: Service health
+-------------------------------
+- Request rate
+- Error rate, broken down by class: validation, SQL, infrastructure
+- Latency at p50, p95 and p99
+- Grant and revoke outcomes
+
+3.2 Dashboard 2: Troubleshooting
+--------------------------------
+Enough for someone who has never seen the code to find the cause of a problem:
+- Connection pool: active, idle, pending and timeouts
+- Database round-trip time
+- JVM heap and GC pause
+- Thread states
+- Executor queue depth and rejected tasks
+- Slow queries
+
+3.3 Alerting
+------------
+- Add one alert rule.
+- Be ready to explain how the threshold was arrived at.
+
+
+==============================================================================
+4. NON-FUNCTIONAL REQUIREMENTS (DESIGN DISCUSSION, NOT BUILD WORK)
+==============================================================================
+
+The brief gives no numbers. Set your own targets and be ready to defend them;
+the reasoning matters more than the figures.
+
+Keep it cloud agnostic. The service ships into self-managed, SaaS and
+air-gapped estates, so name the capability needed rather than the product. If a
+managed service would be used, say what it provides and what replaces it where
+it does not exist.
+
+4.1 Targets
+-----------
+- Sustained and peak throughput
+- Latency objectives per endpoint
+- Availability and the error budget that follows
+- RPO and RTO
+- Volumes designed for: tenants, users, tables, privileges per user
+
+4.2 Throughput
+--------------
+Where does this stop scaling first, and why?
+
+The app is stateless and scales out easily, but GRANT and REVOKE are
+serialised writes against one database, and ten instances holding twenty
+connections each exhaust max_connections long before the JVM struggles.
+
+Cover:
+- Pool sizing against the max_connections limit
+- Batching
+- Whether the write path should go asynchronous behind a queue, and what
+  idempotency that demands
+- Per-tenant rate limiting and backpressure
+- How the read path differs when it can be cached or served from a replica
+
+4.3 High availability
+---------------------
+- Redundant instances spread across independent failure domains
+- Readiness actually gating traffic
+- Rolling or blue-green rollout
+- Graceful shutdown and connection draining
+- Database side: synchronous clustering, or primary and replica with
+  automated failover
+- What becomes of a GRANT that was in flight when the primary disappeared
+- Whether a retry after an ambiguous failure is safe (this is the
+  interesting part)
+
+4.4 Disaster recovery
+---------------------
+- Backups and point-in-time recovery
+- What is replicated to a second site, and how far apart it sits
+- How often a restore is actually rehearsed
+- The question that matters most: after a restore, the privileges reflect a
+  point in the past while intended policy has moved on.
+    * How is that drift detected and reconciled?
+    * Is the database the source of truth, or only the current effect of it?
+
+
+==============================================================================
+DELIVERABLES CHECKLIST
+==============================================================================
+
+[ ] Spring Boot service with all endpoints in section 1.1
+[ ] Safe handling of SQL identifiers
+[ ] Externalised credentials, bounded pool, structured logs with correlation ID
+[ ] Bounded executor, per-principal serialisation, per-item results, timeout,
+    cancellation, graceful drain
+[ ] Parallel bulk test asserting end state
+[ ] Surefire unit tests and Failsafe + Testcontainers integration tests
+[ ] At least one API abuse test
+[ ] Own multi-stage, non-root Dockerfile (pinned digest, JRE), tagged from the
+    project version
+[ ] CVE scan gate wired into Maven, with a documented intentional failure and
+    documented suppressions
+[ ] Flyway or Liquibase migrations with seed data
+[ ] Single-command build: compile, test, image, scan, stack up, smoke test,
+    teardown
+[ ] Docker Compose stack: service, MariaDB, Prometheus, Grafana
+[ ] Two provisioned Grafana dashboards (service health, troubleshooting)
+[ ] One Prometheus alert rule with a documented threshold rationale
+[ ] NFR design document covering targets, throughput, HA and DR

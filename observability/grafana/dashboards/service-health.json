@@ -1,0 +1,37 @@
+{
+  "id": null,
+  "uid": "permission-service-health",
+  "title": "Permission service — health",
+  "tags": ["permission-service", "operations"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "15s",
+  "time": { "from": "now-1h", "to": "now" },
+  "panels": [
+    {
+      "id": 1, "type": "timeseries", "title": "HTTP request rate (req/s)",
+      "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
+      "targets": [{ "expr": "sum by (uri, method) (rate(http_server_requests_seconds_count{job=\"permission-service\"}[5m]))", "legendFormat": "{{method}} {{uri}}", "refId": "A" }]
+    },
+    {
+      "id": 2, "type": "timeseries", "title": "Errors by class (req/s)",
+      "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
+      "targets": [{ "expr": "sum by (class) (rate(permission_errors_total[5m]))", "legendFormat": "{{class}}", "refId": "A" }]
+    },
+    {
+      "id": 3, "type": "timeseries", "title": "HTTP latency p50 / p95 / p99",
+      "gridPos": { "x": 0, "y": 8, "w": 12, "h": 8 },
+      "targets": [
+        { "expr": "histogram_quantile(0.50, sum by (le) (rate(http_server_requests_seconds_bucket{job=\"permission-service\"}[5m])))", "legendFormat": "p50", "refId": "A" },
+        { "expr": "histogram_quantile(0.95, sum by (le) (rate(http_server_requests_seconds_bucket{job=\"permission-service\"}[5m])))", "legendFormat": "p95", "refId": "B" },
+        { "expr": "histogram_quantile(0.99, sum by (le) (rate(http_server_requests_seconds_bucket{job=\"permission-service\"}[5m])))", "legendFormat": "p99", "refId": "C" }
+      ]
+    },
+    {
+      "id": 4, "type": "timeseries", "title": "Grant / revoke outcomes (ops/s)",
+      "gridPos": { "x": 12, "y": 8, "w": 12, "h": 8 },
+      "targets": [{ "expr": "sum by (action, outcome) (rate(permission_operation_total[5m]))", "legendFormat": "{{action}} / {{outcome}}", "refId": "A" }]
+    }
+  ]
+}

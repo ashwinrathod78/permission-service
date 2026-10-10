@@ -1,0 +1,71 @@
+services:
+  mariadb:
+    image: mariadb:11.4.5
+    environment:
+      MARIADB_DATABASE: permission_metadata
+      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD:?Set MARIADB_ROOT_PASSWORD externally}
+      MARIADB_ROOT_HOST: "%"
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    ports:
+      - "3306:3306"
+    volumes:
+      - mariadb_data:/var/lib/mysql
+
+  permission-service:
+    image: ${PERMISSION_SERVICE_IMAGE:?Build the versioned image first}
+    environment:
+      DB_URL: jdbc:mariadb://mariadb:3306/permission_sample
+      DB_USERNAME: ${DB_USERNAME:?Set DB_USERNAME externally}
+      DB_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD externally}
+      SPRING_FLYWAY_URL: jdbc:mariadb://mariadb:3306/permission_metadata
+      MIGRATION_DB_URL: jdbc:mariadb://mariadb:3306/permission_metadata
+      MIGRATION_DB_USERNAME: ${MIGRATION_DB_USERNAME:?Set migration administrator externally}
+      MIGRATION_DB_PASSWORD: ${MIGRATION_DB_PASSWORD:?Set migration password externally}
+      SERVER_SHUTDOWN: graceful
+      SPRING_LIFECYCLE_TIMEOUT_PER_SHUTDOWN_PHASE: 20s
+      DB_POOL_MAX_SIZE: 5
+      BULK_THREADS: 4
+      BULK_QUEUE_CAPACITY: 32
+      BULK_MAX_ITEMS: 100
+      BULK_TIMEOUT: 10s
+    depends_on:
+      mariadb:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.enable-lifecycle
+    volumes:
+      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./observability/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+    depends_on:
+      permission-service:
+        condition: service_healthy
+    ports:
+      - "9090:9090"
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?Set GRAFANA_ADMIN_PASSWORD externally}
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus
+    ports:
+      - "3000:3000"
+
+volumes:
+  mariadb_data:

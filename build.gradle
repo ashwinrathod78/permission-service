@@ -1,0 +1,264 @@
+plugins {
+	id 'java'
+	id 'org.springframework.boot' version '4.1.1'
+	id 'io.spring.dependency-management' version '1.1.7'
+}
+
+group = 'com.permision'
+version = '0.0.1-SNAPSHOT'
+ext['tomcat.version'] = '11.0.26'
+
+java {
+	toolchain {
+		languageVersion = JavaLanguageVersion.of(25)
+	}
+}
+
+repositories {
+	mavenCentral()
+}
+
+dependencies {
+	implementation 'org.springframework.boot:spring-boot-starter-webmvc'
+	implementation 'org.springframework.boot:spring-boot-starter-jdbc'
+	implementation 'org.springframework.boot:spring-boot-starter-validation'
+	implementation 'org.springframework.boot:spring-boot-starter-actuator'
+	implementation 'org.springframework.boot:spring-boot-starter-flyway'
+	developmentOnly 'org.springframework.boot:spring-boot-docker-compose'
+	implementation 'org.flywaydb:flyway-mysql'
+	implementation 'net.logstash.logback:logstash-logback-encoder:8.1'
+	implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:3.1.0'
+	runtimeOnly 'io.micrometer:micrometer-registry-prometheus'
+	runtimeOnly 'org.mariadb.jdbc:mariadb-java-client'
+
+	testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
+	testImplementation 'org.testcontainers:junit-jupiter:1.21.3'
+	testImplementation 'org.testcontainers:mariadb:1.21.3'
+	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+sourceSets {
+	integrationTest {
+		compileClasspath += sourceSets.main.output + sourceSets.test.output
+		runtimeClasspath += output + compileClasspath
+	}
+}
+
+configurations {
+	integrationTestImplementation.extendsFrom testImplementation
+	integrationTestRuntimeOnly.extendsFrom testRuntimeOnly
+}
+
+tasks.named('test') {
+	useJUnitPlatform()
+}
+
+tasks.named('bootRun') {
+	workingDir rootProject.projectDir
+}
+
+tasks.register('integrationTest', Test) {
+	description = 'Runs real MariaDB integration tests using Testcontainers.'
+	group = 'verification'
+	testClassesDirs = sourceSets.integrationTest.output.classesDirs
+	classpath = sourceSets.integrationTest.runtimeClasspath
+	useJUnitPlatform()
+	shouldRunAfter tasks.named('test')
+}
+
+def serviceImage = "permission-service:${project.version}"
+def trivyImage = 'aquasec/trivy:0.75.0@sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa'
+def scanDirectory = layout.buildDirectory.dir('docker/scan').get().asFile
+def trivyCacheDirectory = layout.buildDirectory.dir('docker/trivy-cache').get().asFile
+
+tasks.register('dockerImage', Exec) {
+	group = 'distribution'
+	description = 'Builds the versioned service image from the project Dockerfile.'
+	workingDir projectDir
+	dependsOn tasks.named('bootJar')
+	commandLine 'docker', 'build',
+			'--build-arg', "JAR_FILE=build/libs/${tasks.named('bootJar').get().archiveFileName.get()}",
+			'--tag', serviceImage, '.'
+}
+tasks.named('dockerImage') {
+	mustRunAfter tasks.named('integrationTest')
+}
+
+def scanArchive = { String imageName ->
+	def safeName = imageName.replaceAll('[^A-Za-z0-9_.-]', '_')
+	new File(scanDirectory, "${safeName}.tar")
+}
+
+def serviceImageArchive = scanArchive(serviceImage)
+tasks.register('saveServiceImageForScan', Exec) {
+	dependsOn tasks.named('dockerImage')
+	doFirst {
+		scanDirectory.mkdirs()
+	}
+	commandLine 'docker', 'save', '--output', serviceImageArchive.absolutePath, serviceImage
+}
+
+tasks.register('scanImage', Exec) {
+	group = 'verification'
+	description = 'Fails if the built service image contains a fixable or unfixed CRITICAL CVE.'
+	dependsOn tasks.named('saveServiceImageForScan')
+	doFirst {
+		trivyCacheDirectory.mkdirs()
+	}
+	commandLine 'docker', 'run', '--rm', '-v',
+			"${scanDirectory.absolutePath}:/scan:ro", '-v',
+			"${trivyCacheDirectory.absolutePath}:/root/.cache/trivy", trivyImage,
+			'--cache-dir', '/root/.cache/trivy', '--timeout', '15m',
+			'image', '--input', "/scan/${serviceImageArchive.name}", '--no-progress',
+			'--scanners', 'vuln', '--exit-code', '1', '--severity', 'CRITICAL'
+}
+
+def vulnerableImage = 'alpine:3.10'
+def vulnerableImageArchive = scanArchive(vulnerableImage)
+tasks.register('pullVulnerableImageForScan', Exec) {
+	commandLine 'docker', 'pull', vulnerableImage
+}
+
+tasks.register('saveVulnerableImageForScan', Exec) {
+	dependsOn tasks.named('pullVulnerableImageForScan')
+	doFirst {
+		scanDirectory.mkdirs()
+	}
+	commandLine 'docker', 'save', '--output', vulnerableImageArchive.absolutePath, vulnerableImage
+}
+
+tasks.register('scanImageIntentionalFailure', Exec) {
+	group = 'verification'
+	description = 'Proves the Trivy gate rejects a deliberately vulnerable image.'
+	dependsOn tasks.named('saveVulnerableImageForScan')
+	ignoreExitValue = true
+	doFirst {
+		trivyCacheDirectory.mkdirs()
+	}
+	commandLine 'docker', 'run', '--rm', '-v',
+			"${scanDirectory.absolutePath}:/scan:ro", '-v',
+			"${trivyCacheDirectory.absolutePath}:/root/.cache/trivy", trivyImage,
+			'--cache-dir', '/root/.cache/trivy', '--timeout', '15m',
+			'image', '--input', "/scan/${vulnerableImageArchive.name}", '--no-progress',
+			'--scanners', 'vuln', '--exit-code', '1', '--severity', 'CRITICAL'
+	doLast {
+		if (executionResult.get().exitValue == 0) {
+			throw new GradleException('Expected the deliberately vulnerable alpine:3.10 image to fail the CRITICAL CVE gate.')
+		}
+		logger.lifecycle('Expected failure observed: Trivy rejected alpine:3.10 at the CRITICAL threshold.')
+	}
+}
+
+tasks.register('fullPipeline') {
+	group = 'build'
+	description = 'Tests, builds and scans the image, starts the observability stack, smokes it, and tears it down.'
+	dependsOn tasks.named('test'), tasks.named('integrationTest'), tasks.named('scanImage')
+	doLast {
+		def compose = ['docker', 'compose', '-f', 'compose.yaml']
+		def rootPassword = System.getenv('MARIADB_ROOT_PASSWORD') ?: UUID.randomUUID().toString()
+		def managementPassword = System.getenv('DB_PASSWORD') ?: UUID.randomUUID().toString()
+		def grafanaPassword = System.getenv('GRAFANA_ADMIN_PASSWORD') ?: UUID.randomUUID().toString()
+		def env = [
+				'PERMISSION_SERVICE_IMAGE': serviceImage,
+				'MARIADB_ROOT_PASSWORD': rootPassword,
+				'DB_USERNAME': System.getenv('DB_USERNAME') ?: 'permission_service',
+				'DB_PASSWORD': managementPassword,
+				'MIGRATION_DB_USERNAME': 'root',
+				'MIGRATION_DB_PASSWORD': rootPassword,
+				'GRAFANA_ADMIN_PASSWORD': grafanaPassword
+		]
+		def runCompose = { List<String> arguments, boolean allowFailure = false ->
+			def process = providers.exec {
+				commandLine(compose + arguments)
+				workingDir(projectDir)
+				environment(env)
+				ignoreExitValue = true
+			}
+			def result = process.result.get()
+			def output = process.standardOutput.asText.get()
+			def errors = process.standardError.asText.get()
+			if (output) logger.lifecycle(output.trim())
+			if (errors) logger.lifecycle(errors.trim())
+			if (!allowFailure && result.exitValue != 0) {
+				throw new GradleException("docker compose ${arguments.join(' ')} failed with exit code ${result.exitValue}.")
+			}
+			result.exitValue
+		}
+		try {
+			runCompose(['up', '--detach', '--wait'])
+			def endpoint = new URL('http://localhost:8080/ready')
+			def ready = false
+			for (int attempt = 0; attempt < 45; attempt++) {
+				try {
+					def connection = endpoint.openConnection()
+					connection.connectTimeout = 1000
+					connection.readTimeout = 1000
+					if (connection.responseCode == 200) {
+						ready = true
+						break
+					}
+				} catch (Exception ignored) {
+					sleep(1000)
+				}
+			}
+			if (!ready) {
+				throw new GradleException('Service readiness smoke test failed at http://localhost:8080/ready')
+			}
+			def health = new URL('http://localhost:8080/health').openConnection()
+			health.connectTimeout = 1000
+			health.readTimeout = 1000
+			if (health.responseCode != 200) {
+				throw new GradleException("Health smoke test failed with HTTP ${health.responseCode}")
+			}
+			def applyPermission = { String path, String permission ->
+				def connection = new URL("http://localhost:8080/permissions/${path}").openConnection()
+				connection.requestMethod = 'POST'
+				connection.connectTimeout = 2000
+				connection.readTimeout = 5000
+				connection.doOutput = true
+				connection.setRequestProperty('Content-Type', 'application/json')
+				connection.outputStream.withWriter('UTF-8') { writer ->
+					writer << """{"username":"test-reader","database":"permission_sample","table":"test_table","permissions":["${permission}"]}"""
+				}
+				def status = connection.responseCode
+				connection.disconnect()
+				if (status != 204) {
+					throw new GradleException("Live ${path} smoke test failed with HTTP ${status}")
+				}
+			}
+			applyPermission('grant', 'INSERT')
+			def grantedPrivileges = new URL('http://localhost:8080/permissions/test-reader').openConnection()
+			grantedPrivileges.connectTimeout = 2000
+			grantedPrivileges.readTimeout = 5000
+			def grantedBody = grantedPrivileges.inputStream.getText('UTF-8')
+			grantedPrivileges.disconnect()
+			if (!grantedBody.contains('"privilege":"INSERT"')) {
+				throw new GradleException("Live grant smoke test did not appear in the privilege readback: ${grantedBody}")
+			}
+			applyPermission('revoke', 'INSERT')
+			def revokedPrivileges = new URL('http://localhost:8080/permissions/test-reader').openConnection()
+			revokedPrivileges.connectTimeout = 2000
+			revokedPrivileges.readTimeout = 5000
+			def revokedBody = revokedPrivileges.inputStream.getText('UTF-8')
+			revokedPrivileges.disconnect()
+			if (revokedBody.contains('"privilege":"INSERT"')) {
+				throw new GradleException('Live revoke smoke test left the granted privilege in place.')
+			}
+			def metrics = new URL('http://localhost:8080/actuator/prometheus').openConnection()
+			metrics.connectTimeout = 2000
+			metrics.readTimeout = 5000
+			if (metrics.responseCode != 200
+					|| !metrics.inputStream.getText('UTF-8').contains('permission_bulk_executor_active')) {
+				throw new GradleException('Prometheus metrics smoke test failed.')
+			}
+			metrics.disconnect()
+			logger.lifecycle('Live readiness, health, GRANT/REVOKE readback, and Prometheus smoke tests passed.')
+		} finally {
+			runCompose(['down', '--volumes', '--remove-orphans'], true)
+		}
+	}
+}
+
+tasks.named('check') {
+	dependsOn tasks.named('integrationTest')
+}

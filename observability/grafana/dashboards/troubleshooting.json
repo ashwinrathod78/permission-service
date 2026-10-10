@@ -1,0 +1,72 @@
+{
+  "id": null,
+  "uid": "permission-service-troubleshooting",
+  "title": "Permission service — troubleshooting",
+  "tags": ["permission-service", "operations"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "15s",
+  "time": { "from": "now-1h", "to": "now" },
+  "panels": [
+    {
+      "id": 1, "type": "timeseries", "title": "JDBC connections active / idle / pending",
+      "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
+      "targets": [
+        { "expr": "hikaricp_connections_active", "legendFormat": "active", "refId": "A" },
+        { "expr": "hikaricp_connections_idle", "legendFormat": "idle", "refId": "B" },
+        { "expr": "hikaricp_connections_pending", "legendFormat": "pending", "refId": "C" }
+      ]
+    },
+    {
+      "id": 2, "type": "timeseries", "title": "JDBC connection timeouts (per second)",
+      "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
+      "targets": [{ "expr": "rate(hikaricp_connections_timeout_total[5m])", "legendFormat": "timeouts/s", "refId": "A" }]
+    },
+    {
+      "id": 3, "type": "timeseries", "title": "Database round-trip p50 / p95 / p99 (s)",
+      "gridPos": { "x": 0, "y": 8, "w": 12, "h": 8 },
+      "targets": [
+        { "expr": "histogram_quantile(0.50, sum by (le) (rate(permission_database_roundtrip_seconds_bucket[5m])))", "legendFormat": "p50", "refId": "A" },
+        { "expr": "histogram_quantile(0.95, sum by (le) (rate(permission_database_roundtrip_seconds_bucket[5m])))", "legendFormat": "p95", "refId": "B" },
+        { "expr": "histogram_quantile(0.99, sum by (le) (rate(permission_database_roundtrip_seconds_bucket[5m])))", "legendFormat": "p99", "refId": "C" }
+      ]
+    },
+    {
+      "id": 4, "type": "timeseries", "title": "Slow database operations (> 500 ms, ops/s)",
+      "gridPos": { "x": 12, "y": 8, "w": 12, "h": 8 },
+      "targets": [{ "expr": "sum(rate(permission_database_roundtrip_seconds_bucket{le=\"+Inf\"}[5m])) - sum(rate(permission_database_roundtrip_seconds_bucket{le=\"0.5\"}[5m]))", "legendFormat": "slower than 500 ms", "refId": "A" }]
+    },
+    {
+      "id": 5, "type": "timeseries", "title": "JVM heap used / max (bytes)",
+      "gridPos": { "x": 0, "y": 16, "w": 12, "h": 8 },
+      "targets": [
+        { "expr": "sum(jvm_memory_used_bytes{area=\"heap\"})", "legendFormat": "used", "refId": "A" },
+        { "expr": "sum(jvm_memory_max_bytes{area=\"heap\"})", "legendFormat": "max", "refId": "B" }
+      ]
+    },
+    {
+      "id": 6, "type": "timeseries", "title": "GC pause time (seconds/s)",
+      "gridPos": { "x": 12, "y": 16, "w": 12, "h": 8 },
+      "targets": [{ "expr": "sum by (action) (rate(jvm_gc_pause_seconds_sum[5m]))", "legendFormat": "{{action}}", "refId": "A" }]
+    },
+    {
+      "id": 7, "type": "timeseries", "title": "JVM threads by state",
+      "gridPos": { "x": 0, "y": 24, "w": 12, "h": 8 },
+      "targets": [{ "expr": "sum by (state) (jvm_threads_states_threads)", "legendFormat": "{{state}}", "refId": "A" }]
+    },
+    {
+      "id": 8, "type": "timeseries", "title": "Bulk executor active workers / queue depth",
+      "gridPos": { "x": 12, "y": 24, "w": 12, "h": 8 },
+      "targets": [
+        { "expr": "permission_bulk_executor_active", "legendFormat": "active", "refId": "A" },
+        { "expr": "permission_bulk_executor_queue", "legendFormat": "queue depth", "refId": "B" }
+      ]
+    },
+    {
+      "id": 9, "type": "timeseries", "title": "Bulk executor rejected tasks (per second)",
+      "gridPos": { "x": 0, "y": 32, "w": 12, "h": 8 },
+      "targets": [{ "expr": "rate(permission_bulk_executor_rejected_total[5m])", "legendFormat": "rejected/s", "refId": "A" }]
+    }
+  ]
+}

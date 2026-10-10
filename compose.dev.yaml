@@ -1,0 +1,19 @@
+services:
+  mariadb:
+    image: mariadb:11.4.5
+    environment:
+      MARIADB_DATABASE: permission_metadata
+      MARIADB_ROOT_PASSWORD: local-root-password
+      MARIADB_ROOT_HOST: "%"
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    ports:
+      - "3306:3306"
+    volumes:
+      - permission_service_local_mariadb_data:/var/lib/mysql
+
+volumes:
+  permission_service_local_mariadb_data:
